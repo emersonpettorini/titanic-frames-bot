@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 from pathlib import Path
 
 from state import load_next_index, save_next_index
@@ -39,7 +38,7 @@ def _tweepy_poster():
 
     def poster(file: str, text: str):
         media = api_v1.media_upload(filename=file)
-        client_v2.create_tweet(text=text, media_ids=[media.media_id])
+        client_v2.create_tweet(text=text or None, media_ids=[media.media_id])
 
     return poster
 

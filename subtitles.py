@@ -3,7 +3,7 @@ import srt
 
 def parse_srt(srt_text: str) -> list:
     """Faz o parse de um SRT em lista de srt.Subtitle, ordenada por início."""
-    return list(srt.parse(srt_text))
+    return sorted(srt.parse(srt_text), key=lambda c: c.start)
 
 
 def text_at(cues: list, seconds: int) -> str:

@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -12,9 +13,10 @@ MANIFEST = "manifest.json"
 def extract_frames(video_path: str, out_dir: str = FRAMES_DIR) -> list[str]:
     """Extrai 1 frame/segundo via ffmpeg -> out_dir/NNNNN.jpg. Retorna os caminhos ordenados."""
     out = Path(out_dir)
-    out.mkdir(exist_ok=True)
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "ffmpeg", "-i", video_path,
+        "ffmpeg", "-y", "-i", video_path,
         "-vf", "fps=1",
         "-q:v", "2",
         str(out / "%05d.jpg"),
