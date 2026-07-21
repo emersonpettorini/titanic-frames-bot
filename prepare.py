@@ -4,26 +4,35 @@ import subprocess
 import sys
 from pathlib import Path
 
-from subtitles import parse_srt, text_at
-
 FRAMES_DIR = "frames"
 MANIFEST = "manifest.json"
+BURN_SRT = "_burn_subs.srt"
 
 
-def extract_frames(video_path: str, out_dir: str = FRAMES_DIR) -> list[str]:
-    """Extrai 1 frame/segundo via ffmpeg -> out_dir/NNNNN.jpg. Retorna os caminhos ordenados."""
+def extract_frames(video_path: str, srt_text: str, out_dir: str = FRAMES_DIR) -> list[str]:
+    """Extrai 1 frame/segundo com a legenda queimada -> out_dir/NNNNN.jpg. Retorna caminhos ordenados.
+
+    Grava o srt já normalizado (UTF-8) num arquivo local de nome ASCII e passa ao
+    filtro `subtitles` por caminho relativo — evita o inferno de escape de path do
+    filtergraph no Windows (drive `F:`, barras invertidas).
+    """
     out = Path(out_dir)
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "ffmpeg", "-y", "-i", video_path,
-        "-vf", "fps=1",
-        "-q:v", "2",
-        str(out / "%05d.jpg"),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg falhou:\n{result.stderr}")
+    sub_file = Path(BURN_SRT)
+    sub_file.write_text(srt_text, encoding="utf-8")
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vf", f"fps=1,subtitles={BURN_SRT}",
+            "-q:v", "2",
+            str(out / "%05d.jpg"),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg falhou:\n{result.stderr}")
+    finally:
+        sub_file.unlink(missing_ok=True)
     return sorted(str(p) for p in out.glob("*.jpg"))
 
 
@@ -38,28 +47,32 @@ def read_srt(srt_path: str) -> str:
     return data.decode("latin-1")
 
 
-def build_manifest(frame_files: list[str], srt_text: str) -> list[dict]:
-    """Casa cada frame (segundo = índice) com a legenda ativa. Frames em ordem."""
-    cues = parse_srt(srt_text)
-    manifest = []
-    for i, file in enumerate(sorted(frame_files)):
-        manifest.append({
+def build_manifest(frame_files: list[str], title: str) -> list[dict]:
+    """Monta o texto de cada tweet: "<título> - Frame N de TOTAL" (N 1-based).
+
+    A legenda não entra aqui — ela já vai queimada na imagem por extract_frames.
+    """
+    frames = sorted(frame_files)
+    total = len(frames)
+    return [
+        {
             "index": i,
             "file": file.replace("\\", "/"),
             "seconds": i,
-            "text": text_at(cues, i),
-        })
-    return manifest
+            "text": f"{title} - Frame {i + 1} de {total}",
+        }
+        for i, file in enumerate(frames)
+    ]
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("uso: py prepare.py <video> <srt>")
+    if len(sys.argv) != 4:
+        print('uso: py prepare.py <video> <srt> "<título>"')
         sys.exit(1)
-    video, srt_path = sys.argv[1], sys.argv[2]
+    video, srt_path, title = sys.argv[1], sys.argv[2], sys.argv[3]
     srt_text = read_srt(srt_path)
-    frames = extract_frames(video)
-    manifest = build_manifest(frames, srt_text)
+    frames = extract_frames(video, srt_text)
+    manifest = build_manifest(frames, title)
     Path(MANIFEST).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"{len(manifest)} frames -> {MANIFEST}")
 
