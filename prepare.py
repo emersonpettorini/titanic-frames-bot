@@ -27,6 +27,17 @@ def extract_frames(video_path: str, out_dir: str = FRAMES_DIR) -> list[str]:
     return sorted(str(p) for p in out.glob("*.jpg"))
 
 
+def read_srt(srt_path: str) -> str:
+    """Lê o .srt tentando UTF-8 e caindo pra cp1252; latin-1 nunca falha (fallback final)."""
+    data = Path(srt_path).read_bytes()
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin-1")
+
+
 def build_manifest(frame_files: list[str], srt_text: str) -> list[dict]:
     """Casa cada frame (segundo = índice) com a legenda ativa. Frames em ordem."""
     cues = parse_srt(srt_text)
@@ -46,7 +57,7 @@ def main():
         print("uso: py prepare.py <video> <srt>")
         sys.exit(1)
     video, srt_path = sys.argv[1], sys.argv[2]
-    srt_text = Path(srt_path).read_text(encoding="utf-8")
+    srt_text = read_srt(srt_path)
     frames = extract_frames(video)
     manifest = build_manifest(frames, srt_text)
     Path(MANIFEST).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

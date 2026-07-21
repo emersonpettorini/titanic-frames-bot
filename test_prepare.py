@@ -1,5 +1,5 @@
 # test_prepare.py
-from prepare import build_manifest
+from prepare import build_manifest, read_srt
 
 SAMPLE = """1
 00:00:00,000 --> 00:00:01,000
@@ -21,3 +21,16 @@ def test_build_manifest_matches_text_by_second():
     assert m[2]["text"] == ""          # segundo 2 = silêncio
     assert m[3]["text"] == "tchau"     # segundo 3 = início da cue 2
     assert m[4]["text"] == "tchau"     # segundo 4 = fim inclusivo da cue 2
+
+
+def test_read_srt_cp1252_fallback(tmp_path):
+    # legenda BR típica: "á" (0xE1) em cp1252 não é UTF-8 válido
+    p = tmp_path / "leg.srt"
+    p.write_bytes("olá coração".encode("cp1252"))
+    assert read_srt(str(p)) == "olá coração"
+
+
+def test_read_srt_utf8_with_bom(tmp_path):
+    p = tmp_path / "leg.srt"
+    p.write_bytes("olá".encode("utf-8-sig"))  # utf-8-sig prefixa o BOM nos bytes
+    assert read_srt(str(p)) == "olá"           # e read_srt deve removê-lo
