@@ -20,25 +20,40 @@ def post_next(manifest: list[dict], poster, next_index: int) -> int:
     return next_index + 1
 
 
-def _tweepy_poster():
-    """Constrói um poster(file, text) que posta imagem+texto no X via tweepy."""
-    import tweepy
+MEDIA_UPLOAD_URL = "https://api.x.com/2/media/upload"
 
-    auth = tweepy.OAuth1UserHandler(
+
+def _tweepy_poster():
+    """Constrói um poster(file, text) que posta imagem+texto no X.
+
+    O upload de mídia vai direto no endpoint v2 via requests: o tweepy 4.17 só
+    expõe o v1.1 (`API.media_upload`), que o X aposentou e responde 403.
+    requests/requests_oauthlib já vêm como dependências do próprio tweepy.
+    """
+    import tweepy
+    import requests
+    from requests_oauthlib import OAuth1
+
+    keys = (
         os.environ["X_API_KEY"], os.environ["X_API_SECRET"],
         os.environ["X_ACCESS_TOKEN"], os.environ["X_ACCESS_TOKEN_SECRET"],
     )
-    api_v1 = tweepy.API(auth)  # upload de mídia é v1.1
+    oauth = OAuth1(*keys)
     client_v2 = tweepy.Client(
-        consumer_key=os.environ["X_API_KEY"],
-        consumer_secret=os.environ["X_API_SECRET"],
-        access_token=os.environ["X_ACCESS_TOKEN"],
-        access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
+        consumer_key=keys[0], consumer_secret=keys[1],
+        access_token=keys[2], access_token_secret=keys[3],
     )
 
     def poster(file: str, text: str):
-        media = api_v1.media_upload(filename=file)
-        client_v2.create_tweet(text=text or None, media_ids=[media.media_id])
+        with open(file, "rb") as fh:
+            resp = requests.post(
+                MEDIA_UPLOAD_URL, auth=oauth,
+                files={"media": fh}, data={"media_category": "tweet_image"},
+            )
+        resp.raise_for_status()
+        body = resp.json()
+        media_id = body.get("data", body)["id"]
+        client_v2.create_tweet(text=text or None, media_ids=[media_id])
 
     return poster
 
