@@ -27,15 +27,38 @@ def _bluesky_poster():
     hospedar em URL pública. Login via handle + App Password (Settings → App
     Passwords no Bluesky — nunca a senha principal).
     """
-    from atproto import Client
+    from atproto import Client, models
 
     client = Client()
     client.login(os.environ["BLUESKY_HANDLE"], os.environ["BLUESKY_APP_PASSWORD"])
 
     def poster(file: str, text: str):
-        client.send_image(text=text, image=_load_image(file), image_alt=text)
+        img = _load_image(file)
+        w, h = _jpeg_size(img)
+        ratio = models.AppBskyEmbedDefs.AspectRatio(width=w, height=h)
+        client.send_image(text=text, image=img, image_alt=text, image_aspect_ratio=ratio)
 
     return poster
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int]:
+    """(largura, altura) de um JPEG lendo o marcador SOF — sem depender de PIL.
+
+    Sem isso o Bluesky não sabe as proporções e emoldura o frame largo com
+    faixas brancas. Declarar o aspect ratio faz o app renderizar justo.
+    """
+    i = 2  # pula o SOI (FFD8)
+    while i < len(data):
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):  # SOF
+            h = int.from_bytes(data[i + 5:i + 7], "big")
+            w = int.from_bytes(data[i + 7:i + 9], "big")
+            return w, h
+        i += 2 + int.from_bytes(data[i + 2:i + 4], "big")  # próximo segmento
+    raise ValueError("marcador SOF não encontrado no JPEG")
 
 
 def _load_image(file: str) -> bytes:
