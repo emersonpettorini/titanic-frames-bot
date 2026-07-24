@@ -20,42 +20,36 @@ def post_next(manifest: list[dict], poster, next_index: int) -> int:
     return next_index + 1
 
 
-MEDIA_UPLOAD_URL = "https://api.x.com/2/media/upload"
+def _bluesky_poster():
+    """Constrói um poster(file, text) que posta imagem+texto no Bluesky.
 
-
-def _tweepy_poster():
-    """Constrói um poster(file, text) que posta imagem+texto no X.
-
-    O upload de mídia vai direto no endpoint v2 via requests: o tweepy 4.17 só
-    expõe o v1.1 (`API.media_upload`), que o X aposentou e responde 403.
-    requests/requests_oauthlib já vêm como dependências do próprio tweepy.
+    A API do AT Protocol recebe os bytes da imagem direto (blob), sem precisar
+    hospedar em URL pública. Login via handle + App Password (Settings → App
+    Passwords no Bluesky — nunca a senha principal).
     """
-    import tweepy
-    import requests
-    from requests_oauthlib import OAuth1
+    from atproto import Client
 
-    keys = (
-        os.environ["X_API_KEY"], os.environ["X_API_SECRET"],
-        os.environ["X_ACCESS_TOKEN"], os.environ["X_ACCESS_TOKEN_SECRET"],
-    )
-    oauth = OAuth1(*keys)
-    client_v2 = tweepy.Client(
-        consumer_key=keys[0], consumer_secret=keys[1],
-        access_token=keys[2], access_token_secret=keys[3],
-    )
+    client = Client()
+    client.login(os.environ["BLUESKY_HANDLE"], os.environ["BLUESKY_APP_PASSWORD"])
 
     def poster(file: str, text: str):
-        with open(file, "rb") as fh:
-            resp = requests.post(
-                MEDIA_UPLOAD_URL, auth=oauth,
-                files={"media": fh}, data={"media_category": "tweet_image"},
-            )
-        resp.raise_for_status()
-        body = resp.json()
-        media_id = body.get("data", body)["id"]
-        client_v2.create_tweet(text=text or None, media_ids=[media_id])
+        client.send_image(text=text, image=_load_image(file), image_alt=text)
 
     return poster
+
+
+def _load_image(file: str) -> bytes:
+    """Lê os bytes do frame: de uma URL base (nuvem) ou do disco local (teste).
+
+    Com FRAMES_BASE_URL setado (ex: raw.githubusercontent.com/<user>/<repo>/main),
+    busca {base}/{file}. Sem ele, lê o arquivo local — o mesmo post.py serve nos dois.
+    """
+    base = os.environ.get("FRAMES_BASE_URL")
+    if base:
+        import urllib.request
+        with urllib.request.urlopen(f"{base}/{file}") as resp:
+            return resp.read()
+    return Path(file).read_bytes()
 
 
 def _load_env(path=".env"):
@@ -78,7 +72,7 @@ def main():
     if next_index >= len(manifest):
         print("fim do vídeo — nada a postar")
         return
-    new_index = post_next(manifest, _tweepy_poster(), next_index)
+    new_index = post_next(manifest, _bluesky_poster(), next_index)
     save_next_index(new_index)
     print(f"postado frame {next_index} -> próximo {new_index}")
 
