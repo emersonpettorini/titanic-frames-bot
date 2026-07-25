@@ -1,9 +1,8 @@
 name: post-frame
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"   # a cada 30 min (o GitHub pode atrasar alguns minutos)
-  workflow_dispatch:          # permite disparar manualmente na aba Actions
+  workflow_dispatch:   # disparado pelo cron-job.org a cada 30 min (cron nativo do
+                       # GitHub removido: impontual e redundante com o gatilho externo)
 
 permissions:
   contents: write             # pra commitar o state.json avançado de volta
