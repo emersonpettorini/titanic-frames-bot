@@ -1,10 +1,29 @@
 import json
 import os
+import time
 from pathlib import Path
 
 from state import load_next_index, save_next_index
 
 MANIFEST = "manifest.json"
+RETRY_DELAYS = (5, 15)
+
+
+def _retry(phase, operation, *, delays=RETRY_DELAYS, sleep=time.sleep):
+    """Executa operation novamente após falhas transitórias."""
+    for attempt in range(len(delays) + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            if attempt == len(delays):
+                print(f"[{phase}] falha final: {type(exc).__name__}: {exc}")
+                raise
+            wait = delays[attempt]
+            print(
+                f"[{phase}] tentativa {attempt + 1} falhou: "
+                f"{type(exc).__name__}: {exc}; nova tentativa em {wait}s"
+            )
+            sleep(wait)
 
 
 def post_next(manifest: list[dict], poster, next_index: int) -> int:
@@ -29,16 +48,72 @@ def _bluesky_poster():
     """
     from atproto import Client, models
 
+    handle = os.environ["BLUESKY_HANDLE"]
+    password = os.environ["BLUESKY_APP_PASSWORD"]
     client = Client()
-    client.login(os.environ["BLUESKY_HANDLE"], os.environ["BLUESKY_APP_PASSWORD"])
+    _retry("login", lambda: client.login(handle, password))
 
     def poster(file: str, text: str):
         img = _load_image(file)
         w, h = _jpeg_size(img)
         ratio = models.AppBskyEmbedDefs.AspectRatio(width=w, height=h)
-        client.send_image(text=text, image=img, image_alt=text, image_aspect_ratio=ratio)
+        _send_with_reconciliation(
+            client,
+            handle,
+            text,
+            lambda: client.send_image(
+                text=text,
+                image=img,
+                image_alt=text,
+                image_aspect_ratio=ratio,
+            ),
+        )
 
     return poster
+
+
+def _latest_matches(client, handle: str, text: str) -> bool:
+    feed = client.get_author_feed(actor=handle, limit=1)
+    return bool(feed.feed and feed.feed[0].post.record.text == text)
+
+
+def _send_with_reconciliation(
+    client,
+    handle: str,
+    text: str,
+    send,
+    *,
+    delays=RETRY_DELAYS,
+    sleep=time.sleep,
+):
+    """Publica com retry sem repetir um frame que já chegou ao Bluesky."""
+    def already_published(phase):
+        return _retry(
+            phase,
+            lambda: _latest_matches(client, handle, text),
+            delays=delays,
+            sleep=sleep,
+        )
+
+    if already_published("verificação"):
+        print(f"[post] já publicado, avançando estado: {text}")
+        return
+
+    for attempt, wait in enumerate((*delays, None), 1):
+        try:
+            return send()
+        except Exception as exc:
+            print(f"[post] tentativa {attempt} falhou: {type(exc).__name__}: {exc}")
+            if already_published("reconciliação"):
+                print(f"[post] publicação confirmada após erro: {text}")
+                return
+            if wait is None:
+                raise
+            print(f"[post] nova tentativa em {wait}s")
+            sleep(wait)
+            if already_published("reconciliação"):
+                print(f"[post] publicação apareceu antes do reenvio: {text}")
+                return
 
 
 def _jpeg_size(data: bytes) -> tuple[int, int]:
@@ -61,7 +136,13 @@ def _jpeg_size(data: bytes) -> tuple[int, int]:
     raise ValueError("marcador SOF não encontrado no JPEG")
 
 
-def _load_image(file: str) -> bytes:
+def _load_image(
+    file: str,
+    *,
+    delays=RETRY_DELAYS,
+    sleep=time.sleep,
+    timeout=20,
+) -> bytes:
     """Lê os bytes do frame: de uma URL base (nuvem) ou do disco local (teste).
 
     Com FRAMES_BASE_URL setado (ex: raw.githubusercontent.com/<user>/<repo>/main),
@@ -70,8 +151,12 @@ def _load_image(file: str) -> bytes:
     base = os.environ.get("FRAMES_BASE_URL")
     if base:
         import urllib.request
-        with urllib.request.urlopen(f"{base}/{file}") as resp:
-            return resp.read()
+
+        def download():
+            with urllib.request.urlopen(f"{base}/{file}", timeout=timeout) as resp:
+                return resp.read()
+
+        return _retry("download", download, delays=delays, sleep=sleep)
     return Path(file).read_bytes()
 
 
